@@ -1,0 +1,98 @@
+package predictionlottery
+
+import (
+	"fmt"
+	"github.com/CosmWasm/wasmd/x/wasm"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+)
+
+const BankKeeperAddress = "und147a8jj2sk76mujkkm39n2sr2uxdqjwxpcezcq6"
+
+type Prediction struct {
+	Participant sdk.AccAddress `json:"participant"`
+	Direction   string         `json:"direction"` // "up" or "down"
+	Deposit     sdk.Coins      `json:"deposit"`
+}
+
+type PredictionLottery struct {
+	Participants []Prediction `json:"participants"`
+}
+
+func NewPredictionLottery() PredictionLottery {
+	return PredictionLottery{
+		Participants: []Prediction{},
+	}
+}
+
+// MsgDeposit defines the Deposit message
+type MsgDeposit struct {
+	Amount sdk.Coins `json:"amount"`
+	Sender sdk.AccAddress `json:"sender"`
+}
+
+// MsgPredict defines the Predict message
+type MsgPredict struct {
+	Direction string `json:"direction"` // "up" or "down"
+}
+
+// HandleMsgDeposit handles MsgDeposit message
+func HandleMsgDeposit(ctx sdk.Context, k Keeper, msg MsgDeposit) (*sdk.Result, error) {
+	// Validate deposit amount
+	if !msg.Amount.IsValid() {
+		return nil, fmt.Errorf("invalid deposit amount")
+	}
+
+	// Transfer tokens from sender to contract's address
+	err := k.bankKeeper.SendCoins(ctx, msg.Sender, BankKeeperAddress, msg.Amount)
+	if err != nil {
+		return nil, err
+	}
+
+	// Emit an event for the deposit
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			types.EventTypeDeposit,
+			sdk.NewAttribute(types.AttributeKeyParticipant, msg.Sender.String()),
+			sdk.NewAttribute(types.AttributeKeyDepositAmount, msg.Amount.String()),
+		),
+	)
+
+	return &sdk.Result{Events: ctx.EventManager().Events()}, nil
+}
+
+// HandleMsgPredict handles MsgPredict message
+func HandleMsgPredict(ctx sdk.Context, k Keeper, msg MsgPredict) (*sdk.Result, error) {
+	// Validate prediction direction
+	if msg.Direction != "up" && msg.Direction != "down" {
+		return nil, fmt.Errorf("invalid prediction direction")
+	}
+
+	// Retrieve the list of participants
+	participants := k.GetParticipants(ctx)
+
+	// Check if all participants have made the same prediction
+	allSameDirection := true
+	for _, participant := range participants {
+		if participant.Direction != msg.Direction {
+			allSameDirection = false
+			break
+		}
+	}
+
+	// If all participants have made the same prediction
+	if allSameDirection {
+		// Refund participants' deposits without deducting any fee
+		for _, participant := range participants {
+			err := k.bankKeeper.SendCoins(ctx, BankKeeperAddress, participant.Participant, participant.Deposit)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return &sdk.Result{}, nil
+	}
+
+	// Otherwise, continue with the standard prediction logic to determine the winner and distribute rewards
+	// ...
+
+	return &sdk.Result{}, nil
+}
